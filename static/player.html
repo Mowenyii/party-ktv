@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>KTV 播放</title>
+<style>
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:#000; color:#fff; overflow:hidden; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; }
+  video { position:fixed; inset:0; width:100%; height:100%; object-fit:contain; background:#000; }
+  .screen { position:fixed; inset:0; display:none; flex-direction:column; align-items:center; justify-content:center; gap:18px; text-align:center; background:radial-gradient(circle at 50% 40%, #2b1d3f, #08060c 70%); }
+  .screen.show { display:flex; }
+  .big-qr { width:min(42vh, 380px); background:#fff; border-radius:18px; padding:14px; }
+  .hint { font-size:4.2vh; font-weight:700; }
+  .url { font-size:2.4vh; color:#b9aecb; }
+  .wait-title { font-size:4.6vh; font-weight:700; max-width:80vw; }
+  .wait-status { font-size:2.8vh; color:#f5b941; }
+  #standby { cursor:pointer; z-index:5; }
+  #corner { position:fixed; left:0; top:0; will-change:transform; transition:opacity 1s; z-index:4; display:flex; flex-direction:column; align-items:center; gap:6px; background:#000a; padding:10px; border-radius:14px; }
+  #corner img { width:15vh; background:#fff; border-radius:8px; padding:6px; }
+  #corner span { font-size:1.8vh; }
+  #nowtag { position:fixed; left:2vw; top:3vh; max-width:70vw; background:#000a; padding:1.2vh 1.6vw; border-radius:12px; font-size:3vh; font-weight:600; transition:opacity .8s; opacity:0; }
+  #nowtag small { display:block; font-size:2vh; color:#c9bedb; font-weight:400; margin-top:4px; }
+  #nexttag { position:fixed; left:2vw; bottom:3vh; max-width:60vw; background:#000a; padding:1vh 1.4vw; border-radius:10px; font-size:2.2vh; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #nexttag:empty { display:none; }
+  #start { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; background:#000d; cursor:pointer; z-index:10; font-size:4vh; }
+  #start small { font-size:2.2vh; color:#aaa; }
+  #paused { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-size:10vh; background:#0008; border-radius:24px; padding:2vh 4vh; display:none; }
+</style>
+</head>
+<body>
+<video id="video" playsinline></video>
+
+<div id="idle" class="screen">
+  <img class="big-qr" src="/qr.svg" alt="扫码点歌">
+  <div class="hint">手机扫码点歌</div>
+  <div class="url" id="idle-url"></div>
+</div>
+
+<div id="wait" class="screen">
+  <div class="wait-title" id="wait-title"></div>
+  <div class="wait-status" id="wait-status"></div>
+</div>
+
+<div id="standby" class="screen">
+  <div class="hint">这个窗口已停用</div>
+  <div class="url">另一个播放窗口正在播放 · 点击这里改在此窗口播放</div>
+</div>
+
+<div id="nowtag"></div>
+<div id="nexttag"></div>
+<div id="paused">⏸</div>
+<div id="corner"><img src="/qr.svg" alt=""><span>扫码点歌</span></div>
+<div id="start">点击任意位置开始<small>浏览器要求先点一下才能自动播放声音 · F 全屏 · 空格暂停 · N 切歌</small></div>
+
+<script src="/hls.min.js"></script>
+<script src="/fx.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const video = $("video");
+let ws, state = null, hls = null, loadedQid = null, restartSeen = null, unlocked = false, version = null;
+const myId = Math.random().toString(36).slice(2);  // 只让一个播放窗口工作，用它区分窗口
+const isActive = () => !state?.player_id || state.player_id === myId;
+
+function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => send({ type: "hello", role: "player", id: myId });
+  ws.onclose = () => setTimeout(connect, 1500);
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "state") {
+      if (version && msg.version !== version) return location.reload();  // 服务器换了新代码，刷新加载新页面
+      version = msg.version;
+      state = msg;
+      render();
+    }
+    if (msg.type === "seek" && msg.qid === loadedQid) { video.currentTime = msg.time; reportProgress(); }
+    if (msg.type === "react" && isActive()) KTVFX.react(msg.kind, msg.by);
+  };
+}
+
+function reportProgress() {
+  if (!loadedQid) return;
+  send({ type: "progress", qid: loadedQid, time: video.currentTime, duration: isFinite(video.duration) ? video.duration : 0 });
+}
+setInterval(reportProgress, 1000);
+video.addEventListener("seeked", reportProgress);
+
+function show(id) { for (const s of ["idle", "wait", "standby"]) $(s).classList.toggle("show", s === id); }
+
+function unload() {
+  if (hls) { hls.destroy(); hls = null; }
+  video.removeAttribute("src");
+  video.load();
+  loadedQid = null;
+}
+
+function load(song) {
+  unload();
+  loadedQid = song.qid;
+  const src = `/hls/${song.qid}/index.m3u8`;
+  if (window.Hls && Hls.isSupported()) {
+    hls = new Hls({ startPosition: 0 });  // 播放列表还在增长时 hls.js 默认跳到“直播”末尾，这里强制从头播
+    hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) send({ type: "player_error", qid: song.qid }); });
+    hls.loadSource(src);
+    hls.attachMedia(video);
+  } else {
+    video.src = src;  // Safari 原生支持 HLS
+  }
+  if (unlocked && !state.paused) video.play().catch(() => {});
+  const tag = $("nowtag");
+  tag.innerHTML = "";
+  tag.append(song.title);
+  const by = document.createElement("small");
+  by.textContent = `${song.by} 点的`;
+  tag.append(by);
+  tag.style.opacity = 1;
+  clearTimeout(tag.timer);
+  tag.timer = setTimeout(() => tag.style.opacity = 0, 6000);
+  qrSongStart = performance.now();
+}
+
+// 播放中的点歌二维码：斜着慢慢移动、碰到屏幕边缘反弹，不总挡同一块画面；
+// 每首歌开头显示一段，之后定时出现；暂停时、或队列空了且快唱完时一直显示，提醒大家点歌
+const QR_FIRST = 25, QR_PERIOD = 90, QR_FOR = 15;  // 秒：开头显示 25 秒，之后每 90 秒出现 15 秒
+const qr = { x: 60, y: 60, vx: 46, vy: 31 };
+let qrSongStart = performance.now(), qrLast = performance.now();
+
+function qrVisible(now) {
+  if (!state?.current) return false;  // 没有歌时有居中的大二维码
+  if (state.paused) return true;
+  const queueEmpty = !state.queue.some(s => s.status !== "error");
+  if (queueEmpty && isFinite(video.duration) && video.duration - video.currentTime < 45) return true;
+  const t = (now - qrSongStart) / 1000;
+  return t < QR_FIRST || (t - QR_FIRST) % QR_PERIOD > QR_PERIOD - QR_FOR;
+}
+
+function qrLoop(now) {
+  const el = $("corner"), dt = Math.min(0.1, (now - qrLast) / 1000);
+  qrLast = now;
+  const maxX = innerWidth - el.offsetWidth - 12, maxY = innerHeight - el.offsetHeight - 12;
+  qr.x += qr.vx * dt;
+  qr.y += qr.vy * dt;
+  if (qr.x < 12 || qr.x > maxX) { qr.vx = -qr.vx; qr.x = Math.max(12, Math.min(qr.x, maxX)); }
+  if (qr.y < 12 || qr.y > maxY) { qr.vy = -qr.vy; qr.y = Math.max(12, Math.min(qr.y, maxY)); }
+  el.style.transform = `translate(${qr.x}px, ${qr.y}px)`;
+  el.style.opacity = qrVisible(now) ? 1 : 0;
+  requestAnimationFrame(qrLoop);
+}
+requestAnimationFrame(qrLoop);
+
+function render() {
+  if (!state.player_id) send({ type: "hello", role: "player", id: myId });  // 没有播放窗口了（之前那个被关掉），接手
+  if (!isActive()) {  // 别的窗口在播：这里停用，免得几个窗口同时出声
+    if (loadedQid) unload();
+    show("standby");
+    for (const id of ["corner", "nexttag", "paused"]) $(id).style.display = "none";
+    return;
+  }
+  const cur = state.current;
+  video.volume = state.player_volume / 100;  // 系统音量可调时恒为 100，只在 HDMI 等情况下由手机调节
+  KTVFX.setVolume(state.player_volume / 100);
+  $("idle-url").textContent = state.join_url;
+  const next = state.queue.find(s => s.status !== "error");
+  $("nexttag").textContent = cur && next ? `下一首：${next.title}（${next.by}）` : "";
+  $("corner").style.display = cur ? "flex" : "none";
+  $("nexttag").style.display = "";
+
+  if (!cur) {
+    if (loadedQid) unload();
+    show("idle");
+    $("paused").style.display = "none";
+    return;
+  }
+  if (cur.status !== "ready") {
+    if (loadedQid) unload();
+    show("wait");
+    $("wait-title").textContent = cur.title;
+    $("wait-status").textContent = { resolving: "正在解析链接…", queued: "准备中…", buffering: "缓冲中…", error: cur.error }[cur.status] || "";
+    return;
+  }
+  show(null);
+  if (loadedQid !== cur.qid) { load(cur); restartSeen = state.restart; }
+  if (restartSeen !== state.restart) { restartSeen = state.restart; video.currentTime = 0; }
+  $("paused").style.display = state.paused ? "block" : "none";
+  if (state.paused) video.pause();
+  else if (unlocked && video.paused && !video.ended) video.play().catch(() => {});
+}
+
+video.addEventListener("ended", () => send({ type: "ended", qid: loadedQid }));
+
+$("start").onclick = () => {
+  unlocked = true;
+  KTVFX.unlock();
+  send({ type: "hello", role: "player", id: myId });  // 点了“开始”的窗口负责播放
+  $("start").remove();
+  document.documentElement.requestFullscreen?.().catch(() => {});
+  if (state) render();
+};
+
+document.addEventListener("keydown", e => {
+  if (e.key === "f" || e.key === "F") {
+    document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+  } else if (e.key === " ") {
+    e.preventDefault();
+    send({ type: "pause", paused: !state?.paused });
+  } else if ((e.key === "n" || e.key === "N") && state?.current) {
+    send({ type: "skip", qid: state.current.qid });
+  }
+});
+
+$("standby").onclick = () => send({ type: "hello", role: "player", id: myId });
+KTVFX.init();
+connect();
+</script>
+</body>
+</html>

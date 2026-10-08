@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KTV 点歌</title>
+<style>
+  :root { --bg:#14111c; --card:#211c2e; --line:#30293f; --text:#f2eefa; --dim:#9a91ad; --accent:#ff4f8b; --ok:#3ecf8e; --warn:#f5b941; --bad:#ff6b6b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; padding:16px 14px 40px; }
+  header { display:flex; align-items:center; gap:8px; margin-bottom:14px; }
+  h1 { font-size:20px; margin:0; flex:1; }
+  #conn { width:9px; height:9px; border-radius:50%; background:var(--bad); }
+  #conn.on { background:var(--ok); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px; }
+  input, textarea { width:100%; background:#0f0d16; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; }
+  textarea { height:74px; resize:none; margin:10px 0; }
+  button { font:inherit; border:0; border-radius:10px; padding:9px 14px; background:#3a3350; color:var(--text); }
+  button:active { opacity:.7; }
+  .primary { width:100%; background:var(--accent); font-weight:600; padding:12px; }
+  .label { color:var(--dim); font-size:13px; margin-bottom:8px; display:flex; justify-content:space-between; }
+  .song { display:flex; gap:10px; align-items:center; }
+  .song img, .thumb { width:64px; height:40px; border-radius:6px; object-fit:cover; background:#0f0d16; flex:none; }
+  .meta { flex:1; min-width:0; }
+  .title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sub { color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .controls { display:flex; gap:8px; margin-top:12px; }
+  .controls button { flex:1; }
+  .seek { display:none; gap:8px; align-items:center; margin-top:12px; font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; }
+  .seek.show { display:flex; }
+  .seek input { flex:1; accent-color:var(--accent); padding:0; height:28px; }
+  .volume { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .by { color:#ffb3cf; }
+  .reacts { display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-top:12px; }
+  .reacts button { display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 0; font-size:12px; color:var(--dim); background:#2c2540; }
+  .reacts b { font-size:28px; font-weight:normal; line-height:1.1; }
+  .reacts button.pop { animation:pop .35s ease-out; }
+  @keyframes pop { 0% { transform:scale(1); } 40% { transform:scale(1.25); background:#4a2a3c; } 100% { transform:scale(1); } }
+  .volume button { flex:none; width:64px; font-size:18px; padding:6px 0; }
+  .vol-bar { flex:1; height:8px; background:#0f0d16; border-radius:4px; overflow:hidden; }
+  .vol-bar div { height:100%; background:var(--accent); transition:width .2s; }
+  .vol-text { width:52px; text-align:right; color:var(--dim); font-size:13px; }
+  .badge { font-size:11px; padding:1px 6px; border-radius:6px; margin-left:4px; }
+  .s-ready { background:#1d3b2f; color:var(--ok); }
+  .s-buffering, .s-resolving, .s-queued { background:#3b3220; color:var(--warn); }
+  .s-error { background:#3f2027; color:var(--bad); }
+  .err { color:var(--bad); font-size:12px; margin-top:4px; word-break:break-all; }
+  ol { list-style:none; margin:0; padding:0; }
+  li { padding:10px 0; border-top:1px solid var(--line); background:var(--card); }
+  li:first-child { border-top:0; }
+  li.dragging { opacity:.85; outline:2px solid var(--accent); border-radius:10px; }
+  .handle { flex:none; width:28px; text-align:center; color:var(--dim); font-size:20px; touch-action:none; cursor:grab; user-select:none; -webkit-user-select:none; }
+  .row-btns { display:flex; gap:6px; flex:none; }
+  .row-btns button { padding:6px 9px; font-size:13px; }
+  .row-btns .top { background:#4a2a3c; color:#ffb3cf; }
+  .empty { color:var(--dim); text-align:center; padding:8px 0; }
+  .link { background:none; color:var(--dim); padding:0; font-size:13px; }
+  #clear-history { margin-left:8px; text-decoration:underline; }
+  #toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#000c; padding:10px 16px; border-radius:10px; display:none; max-width:90%; z-index:5; }
+</style>
+</head>
+<body>
+<header><h1>🎤 KTV 点歌</h1><span id="conn" title="连接状态"></span></header>
+
+<div class="card">
+  <input id="name" placeholder="你的昵称" maxlength="20">
+  <textarea id="link" placeholder="粘贴 B 站 / YouTube 视频链接或分享文字"></textarea>
+  <button class="primary" id="add">点歌</button>
+</div>
+
+<div class="card">
+  <div class="label">正在播放</div>
+  <div id="now"></div>
+  <div class="seek" id="seek-row">
+    <span id="seek-cur">0:00</span>
+    <input type="range" id="seek" min="0" max="0" step="1" value="0">
+    <span id="seek-dur">0:00</span>
+  </div>
+  <div class="volume">
+    <button data-act="volume" data-delta="-10">🔉</button>
+    <div class="vol-bar"><div id="vol-fill" style="width:0"></div></div>
+    <span class="vol-text" id="vol-text">--</span>
+    <button data-act="volume" data-delta="10">🔊</button>
+  </div>
+  <div class="reacts">
+    <button data-act="react" data-kind="clap"><b>👏</b>鼓掌</button>
+    <button data-act="react" data-kind="whistle"><b>😙</b>口哨</button>
+    <button data-act="react" data-kind="firework"><b>🎆</b>烟花</button>
+    <button data-act="react" data-kind="like"><b>👍</b>点赞</button>
+    <button data-act="react" data-kind="heart"><b>❤️</b>比心</button>
+    <button data-act="react" data-kind="haha"><b>😂</b>哈哈</button>
+    <button data-act="react" data-kind="flower"><b>🌹</b>送花</button>
+    <button data-act="react" data-kind="cheers"><b>🍻</b>干杯</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="label"><span>已点歌曲 <span id="count"></span></span><span>按住 ☰ 拖动排序</span></div>
+  <ol id="queue"></ol>
+</div>
+
+<div class="card">
+  <div class="label"><span>播放历史 <button class="link" id="clear-history">清空</button></span><button class="link" id="more-history"></button></div>
+  <ol id="history"></ol>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STATUS = { resolving:"解析中", queued:"排队中", buffering:"缓冲中", ready:"就绪", error:"失败" };
+const HISTORY_SHOWN = 10;
+let ws, state = null, dragging = null, showAllHistory = false;
+
+$("name").value = localStorage.getItem("ktv-name") || "";
+$("name").onchange = () => localStorage.setItem("ktv-name", myName());
+
+function myName() { return $("name").value.trim(); }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function fmt(sec) { if (!sec) return ""; sec = Math.round(sec); return `${Math.floor(sec/60)}:${String(sec%60).padStart(2,"0")}`; }
+function clock(ts) { const d = new Date(ts * 1000); return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(t.timer); t.timer = setTimeout(() => t.style.display = "none", 3000); }
+function send(msg) { if (ws?.readyState === 1) { ws.send(JSON.stringify(msg)); return true; } toast("还没连上服务器，稍等再试"); return false; }
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => $("conn").classList.add("on");
+  ws.onclose = () => { $("conn").classList.remove("on"); setTimeout(connect, 1500); };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "error") toast(msg.message);
+    if (msg.type === "state") {
+      if (state && msg.version !== state.version) return location.reload();  // 服务器换了新代码，刷新加载新页面
+      state = msg;
+      render();
+    }
+    if (msg.type === "progress") showProgress(msg);
+  };
+}
+
+// 只在内容真的变了才重写 DOM：别人点歌时状态频繁广播，反复重建按钮会吞掉正在按的点击
+function setHTML(el, html) { if (el.lastHTML !== html) { el.innerHTML = html; el.lastHTML = html; } }
+
+function songInfo(s, extra) {
+  const rest = [s.uploader, fmt(s.duration), extra].filter(Boolean).join(" · ");
+  return `
+    ${s.thumbnail ? `<img src="${esc(s.thumbnail)}" referrerpolicy="no-referrer" alt="">` : `<div class="thumb"></div>`}
+    <div class="meta">
+      <div class="title">${esc(s.title)}</div>
+      <div class="sub"><span class="by">${esc(s.by)} 点的</span>${rest ? " · " + esc(rest) : ""}${s.status ? `<span class="badge s-${s.status}">${STATUS[s.status] || s.status}</span>` : ""}</div>
+      ${s.error ? `<div class="err">${esc(s.error)}</div>` : ""}
+    </div>`;
+}
+
+function render() {
+  const cur = state.current;
+  $("seek-row").classList.toggle("show", !!cur && cur.status === "ready");
+  setHTML($("now"), cur ? `
+    <div class="song">${songInfo(cur)}</div>
+    <div class="controls">
+      <button data-act="pause" data-paused="${!state.paused}">${state.paused ? "▶ 继续" : "⏸ 暂停"}</button>
+      <button data-act="restart">↺ 重唱</button>
+      <button data-act="skip" data-qid="${cur.qid}">⏭ 切歌</button>
+    </div>` : `<div class="empty">还没有歌，快来点第一首</div>`);
+
+  const vol = state.volume;
+  $("vol-fill").style.width = `${vol ?? 0}%`;
+  $("vol-text").textContent = vol == null ? "--" : `${vol}%${state.volume_mode === "player" ? " 播放器" : ""}`;
+
+  if (!dragging) renderQueue();  // 拖动中先不重画，松手后再用最新状态重画
+
+  const history = state.history || [];
+  const shown = showAllHistory ? history : history.slice(0, HISTORY_SHOWN);
+  $("more-history").textContent = history.length > HISTORY_SHOWN ? (showAllHistory ? "收起" : `全部 ${history.length} 首`) : "";
+  setHTML($("history"), shown.length ? shown.map(s => `
+    <li><div class="song">
+      ${songInfo(s, clock(s.played_at))}
+      <div class="row-btns"><button data-act="readd" data-url="${esc(s.url)}">再点</button></div>
+    </div></li>`).join("") : `<div class="empty">还没有播放过的歌</div>`);
+}
+
+function renderQueue() {
+  $("count").textContent = state.queue.length ? `(${state.queue.length})` : "";
+  setHTML($("queue"), state.queue.length ? state.queue.map((s, i) => `
+    <li data-qid="${s.qid}"><div class="song">
+      <span class="handle">☰</span>
+      ${songInfo(s)}
+      <div class="row-btns">
+        ${s.status === "error" ? `<button data-act="retry" data-qid="${s.qid}">重试</button>` : ""}
+        ${i > 0 ? `<button class="top" data-act="top" data-qid="${s.qid}">⬆置顶</button>` : ""}
+        <button data-act="remove" data-qid="${s.qid}">删除</button>
+      </div>
+    </div></li>`).join("") : `<div class="empty">队列是空的</div>`);
+}
+
+// 进度条：播放页每秒上报一次进度；拖动期间不被上报覆盖，松手后发跳转
+let seeking = false;
+function showProgress(p) {
+  if (seeking || p.qid !== state?.current?.qid) return;
+  const bar = $("seek");
+  bar.max = Math.max(1, Math.round(p.duration));
+  bar.value = Math.round(p.time);
+  $("seek-cur").textContent = fmt(p.time) || "0:00";
+  $("seek-dur").textContent = fmt(p.duration) || "0:00";
+}
+$("seek").addEventListener("input", () => { seeking = true; $("seek-cur").textContent = fmt(Number($("seek").value)) || "0:00"; });
+$("seek").addEventListener("change", () => {
+  const cur = state?.current;
+  if (cur) send({ type: "seek", qid: cur.qid, time: Number($("seek").value) });
+  setTimeout(() => seeking = false, 1500);  // 等播放页跳过去、上报新进度，避免进度条先弹回旧位置
+});
+
+document.body.addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const act = b.dataset.act, qid = b.dataset.qid;
+  const title = qid && [state.current, ...state.queue].find(s => s?.qid === qid)?.title;
+  if (act === "skip" && !confirm(`切掉《${title}》？`)) return;
+  if (act === "remove" && !confirm(`从队列删除《${title}》？`)) return;
+  if (act === "volume") return send({ type: "volume", delta: Number(b.dataset.delta) });
+  if (act === "react") {
+    b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop");
+    navigator.vibrate?.(15);
+    return send({ type: "react", kind: b.dataset.kind, by: myName() });
+  }
+  if (act === "pause") return send({ type: "pause", paused: b.dataset.paused === "true" });
+  if (act === "readd") {
+    if (send({ type: "add", text: b.dataset.url, by: myName() })) toast("已重新加入队列");
+    return;
+  }
+  send({ type: act, qid });
+});
+
+$("more-history").onclick = () => { showAllHistory = !showAllHistory; render(); };
+$("clear-history").onclick = () => {
+  if (state?.history?.length && confirm(`清空全部 ${state.history.length} 条播放历史？所有人的手机上都会清空，不能恢复。`)) send({ type: "clear_history" });
+};
+
+// 拖动排序：按住 ☰ 上下拖，经过别的歌时直接在列表里换位置，松手后把新位置发给服务器
+$("queue").addEventListener("pointerdown", e => {
+  const handle = e.target.closest(".handle");
+  if (!handle) return;
+  e.preventDefault();
+  const li = handle.closest("li");
+  handle.setPointerCapture(e.pointerId);
+  dragging = { li, qid: li.dataset.qid, from: [...$("queue").children].indexOf(li) };
+  li.classList.add("dragging");
+});
+$("queue").addEventListener("pointermove", e => {
+  if (!dragging) return;
+  const over = document.elementFromPoint(e.clientX, e.clientY)?.closest("#queue li");
+  if (!over || over === dragging.li) return;
+  const r = over.getBoundingClientRect();
+  over.parentNode.insertBefore(dragging.li, e.clientY > r.top + r.height / 2 ? over.nextSibling : over);
+});
+function endDrag() {
+  if (!dragging) return;
+  const { li, qid, from } = dragging;
+  const to = [...$("queue").children].indexOf(li);
+  li.classList.remove("dragging");
+  dragging = null;
+  // 以“放到哪首前面”告诉服务器，拖动期间别人增删了歌也不会放错位置
+  if (to !== from) send({ type: "move", qid, to, before: li.nextElementSibling?.dataset.qid || null });
+  $("queue").lastHTML = null;  // DOM 已被拖乱，强制按最新状态重画
+  if (state) render();
+}
+$("queue").addEventListener("pointerup", endDrag);
+$("queue").addEventListener("pointercancel", endDrag);
+
+$("add").onclick = () => {
+  const text = $("link").value.trim();
+  if (!text) return toast("先粘贴一个视频链接");
+  localStorage.setItem("ktv-name", myName());
+  if (send({ type: "add", text, by: myName() })) {
+    $("link").value = "";
+    toast("已加入队列");
+  }
+};
+
+connect();
+</script>
+</body>
+</html>

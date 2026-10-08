@@ -1,0 +1,6 @@
+venv/
+ca.pem
+__pycache__/
+history.json
+*.tmp
+.DS_Store
