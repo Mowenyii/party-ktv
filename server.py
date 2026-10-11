@@ -37,6 +37,7 @@ PRELOAD = 1  # 除当前歌曲外，提前缓冲接下来几首，切歌时无�
 REACTIONS = {"clap", "whistle", "firework", "like", "heart", "haha", "flower", "cheers"}
 REACT_LIMIT, REACT_WINDOW = 5, 3.0  # 每个连接每 3 秒最多 5 次，防止狂点刷屏
 RESOLVE_TTL = 20 * 60  # 解析出的地址会过期，超过这个秒数就重新解析
+TRANSIENT_ERRORS = ("timed out", "IncompleteRead", "TransportError", "Connection reset", "HTTP Error 5")
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 HLS_ROOT = Path(tempfile.mkdtemp(prefix="ktv-hls-"))
 URL_RE = re.compile(r"https?://[^\s<>\"'，。！？【】（）]+")
@@ -241,13 +242,20 @@ def clean_error(e):
 
 def resolve(song):
     """解析标题等信息和真实播放地址，只拿地址不下载。"""
-    opts = {"format": FORMAT, "noplaylist": True, "quiet": True, "no_warnings": True}
+    opts = {"format": FORMAT, "noplaylist": True, "quiet": True, "no_warnings": True, "socket_timeout": 10}
     if os.environ.get("SSL_CERT_FILE"):
         opts["compat_opts"] = {"no-certifi"}  # 用 SSL_CERT_FILE 指定的证书（公司代理需要）
     if os.environ.get("KTV_COOKIES_FROM_BROWSER"):
         opts["cookiesfrombrowser"] = (os.environ["KTV_COOKIES_FROM_BROWSER"],)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(song["url"], download=False)
+    for attempt in range(3):  # B 站接口偶尔超时或只返回一半，多是一时的网络抖动，稍等重试
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(song["url"], download=False)
+            break
+        except yt_dlp.utils.DownloadError as e:
+            if attempt == 2 or not any(k in str(e) for k in TRANSIENT_ERRORS):
+                raise
+            time.sleep(1 + 2 * attempt)
     if "entries" in info:
         raise ValueError("这是合集/播放列表，请贴单个视频的链接")
     inputs = []
@@ -351,7 +359,11 @@ class Relay:
                 cmd += ["-headers", extra]
             if headers.get("User-Agent"):
                 cmd += ["-user_agent", headers["User-Agent"]]
-            cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+            # B 站 CDN 偶尔会连接不断却不再发数据：rw_timeout 让 ffmpeg 8 秒没数据就断开，从断点续传，
+            # 否则会一直干等、画面卡死。服务器返回 5xx 或网络出错时也自动重连
+            cmd += ["-rw_timeout", "8000000", "-reconnect", "1", "-reconnect_streamed", "1",
+                    "-reconnect_on_network_error", "1", "-reconnect_on_http_error", "5xx",
+                    "-reconnect_delay_max", "10"]
             cmd += ["-i", url]
         if len(inputs) > 1:
             cmd += ["-map", "0:v:0", "-map", "1:a:0"]
@@ -418,7 +430,11 @@ class Relay:
                     return
                 if entries:  # 出错退出时最后一个分片可能被截断，先撤掉，重拉时换成完整的
                     write_playlist(self.playlist, entries[:-1], ended=False)
-                inputs = self._inputs(fresh=True)  # 断流多半是地址失效，重新解析
+                time.sleep(2)
+                try:
+                    inputs = self._inputs(fresh=True)  # 断流可能是地址失效，重新解析
+                except Exception:
+                    pass  # 重新解析也失败多半是网络抖动，旧地址通常还有效，先接着用，不要让唱了一半的歌直接失败
             reason = log.read_text(errors="ignore").strip().splitlines()[-1:] or ["未知错误"]
             if playlist_info(self.playlist)[0] > 0:  # 已经能播一部分：收尾，让播放器正常结束
                 write_playlist(self.playlist, read_playlist(self.playlist), ended=True)
