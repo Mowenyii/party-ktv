@@ -10,9 +10,15 @@
 
 ### Windows
 
-先安装 [Python 3](https://www.python.org/downloads/windows/)（安装时勾选 **Add Python to PATH**），然后双击 `start.bat`。Windows 防火墙首次询问时，请允许 Python 访问“专用网络”。
+支持 Windows 10/11。先把下载的 ZIP **完整解压**到一个文件夹，再双击 `start.bat`：
 
-- 首次运行会自动创建 `venv` 并安装依赖，大约需要 1 分钟。
+- 没有 Python 3.10 或更高版本时，脚本会自动打开官方下载页；安装时建议勾选 **Add Python to PATH**，安装完重新双击 `start.bat`。
+- 脚本会自动创建或修复运行环境并安装依赖。Windows 防火墙首次询问时，请允许 Python 访问“专用网络”。
+- 运行期间不要关闭弹出的命令行窗口；停止使用时在窗口里按 `Ctrl+C`，或直接关闭窗口。
+
+### 启动后
+
+- 首次运行会自动创建 `venv` 并安装依赖，大约需要 1 分钟；之后启动只需几秒。
 - 启动后浏览器会打开播放页 `http://localhost:8000/player`，**先点一下屏幕**（浏览器要求用户点击后才能自动播放声音），然后按 F 全屏。
 - 手机和电脑连同一个 Wi-Fi，扫屏幕上的二维码进入点歌页。
 

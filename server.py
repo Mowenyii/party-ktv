@@ -120,7 +120,7 @@ def dedupe(history):
 def save_history():
     try:
         tmp = HISTORY_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state["history"], ensure_ascii=False))
+        tmp.write_text(json.dumps(state["history"], ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, HISTORY_FILE)  # 原子替换：写到一半崩溃也不会留下损坏的文件
     except OSError:
         pass
@@ -128,7 +128,7 @@ def save_history():
 
 def load_history():
     try:
-        history = json.loads(HISTORY_FILE.read_text())
+        history = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
     if not isinstance(history, list):
@@ -362,10 +362,21 @@ class Relay:
         threading.Thread(target=self._run, daemon=True).start()
 
     def stop(self):
+        proc = None
         with self.guard:
             self.stopped = True
             if self.proc and self.proc.poll() is None:
-                self.proc.kill()
+                proc = self.proc
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        # Windows 在子进程完全退出前会锁住它正在写的分片，先等句柄释放再清理目录。
+        if proc:
+            try:
+                proc.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def _inputs(self, fresh):
@@ -708,5 +719,7 @@ if __name__ == "__main__":
         if not state["player_id"]:
             webbrowser.open(f"http://localhost:{PORT}/player")
     if not os.environ.get("KTV_NO_BROWSER"):
-        threading.Timer(4, open_player).start()
+        timer = threading.Timer(4, open_player)
+        timer.daemon = True  # 端口占用等启动失败时不要为了等浏览器计时器而卡住进程
+        timer.start()
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
