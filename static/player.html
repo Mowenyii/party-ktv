@@ -20,8 +20,7 @@
   #corner span { font-size:1.8vh; }
   #nowtag { position:fixed; left:2vw; top:3vh; max-width:70vw; background:#000a; padding:1.2vh 1.6vw; border-radius:12px; font-size:3vh; font-weight:600; transition:opacity .8s; opacity:0; }
   #nowtag small { display:block; font-size:2vh; color:#c9bedb; font-weight:400; margin-top:4px; }
-  #nexttag { position:fixed; left:2vw; bottom:3vh; max-width:60vw; background:#000a; padding:1vh 1.4vw; border-radius:10px; font-size:2.2vh; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #nexttag:empty { display:none; }
+  #nexttag { position:fixed; left:2vw; bottom:3vh; max-width:60vw; background:#000a; padding:1vh 1.4vw; border-radius:10px; font-size:2.2vh; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:none; }
   #start { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; background:#000d; cursor:pointer; z-index:10; font-size:4vh; }
   #start small { font-size:2.2vh; color:#aaa; }
   #paused { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); font-size:10vh; background:#0008; border-radius:24px; padding:2vh 4vh; display:none; }
@@ -86,6 +85,25 @@ function reportProgress() {
 }
 setInterval(reportProgress, 1000);
 video.addEventListener("seeked", reportProgress);
+
+// “下一首”只在本首歌刚开始和快结束时短暂显示，避免一直挡住画面。
+const NEXT_AT_START_FOR = 6, NEXT_BEFORE_END = 10;
+
+function updateNextTag() {
+  const tag = $("nexttag");
+  const cur = state?.current;
+  const next = state?.queue.find(s => s.status !== "error");
+  const duration = Number(cur?.duration);
+  const currentTime = Number(video.currentTime) || 0;
+  const nearStart = currentTime < NEXT_AT_START_FOR;
+  const nearEnd = Number.isFinite(duration) && duration > 0 && duration - currentTime <= NEXT_BEFORE_END;
+  const visible = isActive() && cur?.status === "ready" && next && (nearStart || nearEnd);
+  tag.textContent = cur && next ? `下一首：${next.title}（${next.by}）` : "";
+  tag.style.display = visible ? "block" : "none";
+}
+
+video.addEventListener("timeupdate", updateNextTag);
+video.addEventListener("durationchange", updateNextTag);
 
 function show(id) { for (const s of ["idle", "wait", "standby"]) $(s).classList.toggle("show", s === id); }
 
@@ -162,10 +180,8 @@ function render() {
   video.volume = state.player_volume / 100;  // 系统音量可调时恒为 100，只在 HDMI 等情况下由手机调节
   KTVFX.setVolume(state.player_volume / 100);
   $("idle-url").textContent = state.join_url;
-  const next = state.queue.find(s => s.status !== "error");
-  $("nexttag").textContent = cur && next ? `下一首：${next.title}（${next.by}）` : "";
   $("corner").style.display = cur ? "flex" : "none";
-  $("nexttag").style.display = "";
+  updateNextTag();
 
   if (!cur) {
     if (loadedQid) unload();
@@ -182,6 +198,7 @@ function render() {
   }
   show(null);
   if (loadedQid !== cur.qid) { load(cur); restartSeen = state.restart; }
+  updateNextTag();
   if (restartSeen !== state.restart) { restartSeen = state.restart; video.currentTime = 0; }
   $("paused").style.display = state.paused ? "block" : "none";
   if (state.paused) video.pause();
