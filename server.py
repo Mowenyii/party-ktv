@@ -12,6 +12,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -54,15 +55,22 @@ def lan_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("10.255.255.255", 1))  # UDP connect 不发包，只用来选出口网卡
-        return s.getsockname()[0]
+        address = s.getsockname()[0]
+        if not address.startswith(("127.", "169.254.")) and address != "0.0.0.0":
+            return address
     except OSError:
         pass
     finally:
         s.close()
-    for iface in ("en0", "en1"):  # macOS 的 Wi-Fi / 有线网卡
-        r = subprocess.run(["ipconfig", "getifaddr", iface], capture_output=True, text=True)
-        if r.stdout.strip():
-            return r.stdout.strip()
+    # 默认路由不可用时，从主机名解析结果里找一个非回环 IPv4 地址；Windows、macOS、Linux 都支持。
+    try:
+        addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+        for info in addresses:
+            address = info[4][0]
+            if not address.startswith(("127.", "169.254.")) and address != "0.0.0.0":
+                return address
+    except OSError:
+        pass
     return "127.0.0.1"
 
 
@@ -81,7 +89,7 @@ lock = threading.RLock()
 dirty = threading.Event()  # 状态变了，等广播协程推给所有客户端
 state = {
     "current": None, "queue": [], "paused": False, "restart": 0,
-    # volume_mode: system 调 macOS 系统音量；player 调播放器音量（输出到 HDMI 等系统音量不可调时）
+    # volume_mode: system 调系统音量；player 调播放器音量（Windows、HDMI 等系统音量不可调时）
     "volume": None, "volume_mode": "system", "player_volume": 100,
     "history": [],
     "player_id": None,  # 只让一个播放窗口工作：最后打开或最后点“开始”的那个
@@ -200,18 +208,34 @@ def schedule():
 
 
 def system_volume():
-    """读取 macOS 输出音量；输出设备不支持调节（如 HDMI）时返回 None。"""
-    r = subprocess.run(["osascript", "-e", "output volume of (get volume settings)"],
-                       capture_output=True, text=True, timeout=5)
+    """读取 macOS 输出音量；其他系统或不支持调节的输出设备返回 None。"""
+    if sys.platform != "darwin":
+        return None
+    try:
+        r = subprocess.run(["osascript", "-e", "output volume of (get volume settings)"],
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
     return int(r.stdout) if r.stdout.strip().isdigit() else None
+
+
+def set_system_volume(value):
+    """尝试设置 macOS 系统音量；不支持时让调用方改用播放器音量。"""
+    if sys.platform != "darwin":
+        return False
+    try:
+        r = subprocess.run(["osascript", "-e", f"set volume output volume {value}"], timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
 
 
 def change_volume(delta):
     with volume_lock:
         current = system_volume()
         if current is not None and delta:
-            current = max(0, min(100, current + delta))
-            subprocess.run(["osascript", "-e", f"set volume output volume {current}"], timeout=5)
+            new_volume = max(0, min(100, current + delta))
+            current = new_volume if set_system_volume(new_volume) else None
         with lock:
             if current is None:  # 系统音量调不了，改调播放器音量
                 state["volume_mode"] = "player"
