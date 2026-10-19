@@ -6,7 +6,11 @@
 
 ### macOS
 
-在 Finder 里双击 `start.command`，或在终端运行 `./start.command`。第一次启动时，macOS 可能会询问是否允许 Python 接受传入连接，请选择“允许”。
+先把下载的 ZIP **完整解压**到一个文件夹，再在 Finder 里双击 `start.command`，或在终端运行 `./start.command`：
+
+- 没有 Python 3.10 或更高版本时，脚本会自动打开官方下载页；安装完成后重新双击 `start.command`。
+- 脚本会自动创建或修复运行环境、读取系统证书并安装依赖。macOS 首次询问是否允许 Python 接受传入连接时，请选择“允许”。
+- 运行期间不要关闭终端窗口；停止使用时在窗口里按 `Ctrl+C`，或直接关闭窗口。
 
 ### Windows
 
@@ -19,6 +23,7 @@
 ### 启动后
 
 - 首次运行会自动创建 `venv` 并安装依赖，大约需要 1 分钟；之后启动只需几秒。
+- 重复双击启动脚本会复用已经运行的服务，不会中断当前播放。
 - 启动后浏览器会打开播放页 `http://localhost:8000/player`，**先点一下屏幕**（浏览器要求用户点击后才能自动播放声音），然后按 F 全屏。
 - 手机和电脑连同一个 Wi-Fi，扫屏幕上的二维码进入点歌页。
 
@@ -52,6 +57,7 @@
 ## 常见问题
 
 - **手机打不开页面**：确认手机和电脑在同一个 Wi-Fi，并检查 macOS 或 Windows 防火墙设置。Windows 上应允许 Python 访问“专用网络”。公司电脑可能禁止外部设备访问，换私人电脑最省事。
+- **macOS 无法打开启动脚本**：先右键点 `start.command` 并选择“打开”。如果提示没有执行权限，在终端运行 `chmod +x start.command` 后重试。
 - **某首歌一直失败**：更新解析器后重试。macOS 运行 `./venv/bin/pip install -U yt-dlp`，Windows 运行 `venv\Scripts\python -m pip install -U yt-dlp`；平台改版后 yt-dlp 通常很快会跟进。
 
 ## 第三方

@@ -64,7 +64,7 @@ function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
-  ws.onopen = () => send({ type: "hello", role: "player", id: myId });
+  ws.onopen = () => { if (unlocked) send({ type: "hello", role: "player", id: myId }); };
   ws.onclose = () => setTimeout(connect, 1500);
   ws.onmessage = e => {
     const msg = JSON.parse(e.data);

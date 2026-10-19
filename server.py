@@ -5,6 +5,7 @@
 """
 import asyncio
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -252,6 +253,22 @@ def snapshot():
         return json.dumps({"type": "state", **state, "join_url": JOIN_URL, "version": VERSION}, ensure_ascii=False)
 
 
+def existing_instance():
+    """如果指定端口已经是本程序，返回它的状态；避免重复双击启动时报端口占用。"""
+    connection = http.client.HTTPConnection("127.0.0.1", PORT, timeout=0.8)
+    try:
+        connection.request("GET", "/health")
+        response = connection.getresponse()
+        if response.status != 200:
+            return None
+        info = json.loads(response.read(4096))
+        return info if isinstance(info, dict) and info.get("app") == "party-ktv" else None
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    finally:
+        connection.close()
+
+
 # ---------------------------------------------------------------- 解析与中转
 def clean_error(e):
     msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e)).replace("ERROR: ", "").strip()
@@ -267,8 +284,9 @@ def clean_error(e):
 def resolve(song):
     """解析标题等信息和真实播放地址，只拿地址不下载。"""
     opts = {"format": FORMAT, "noplaylist": True, "quiet": True, "no_warnings": True, "socket_timeout": 10}
-    if os.environ.get("SSL_CERT_FILE"):
-        opts["compat_opts"] = {"no-certifi"}  # 用 SSL_CERT_FILE 指定的证书（公司代理需要）
+    if os.environ.get("SSL_CERT_FILE") or sys.platform == "win32":
+        # macOS 启动脚本用 SSL_CERT_FILE；Windows 则直接使用系统证书库，兼容公司 HTTPS 代理。
+        opts["compat_opts"] = {"no-certifi"}
     if os.environ.get("KTV_COOKIES_FROM_BROWSER"):
         opts["cookiesfrombrowser"] = (os.environ["KTV_COOKIES_FROM_BROWSER"],)
     for attempt in range(3):  # B 站接口偶尔超时或只返回一半，多是一时的网络抖动，稍等重试
@@ -664,6 +682,12 @@ def qr_code():
     return Response(img.to_string(), media_type="image/svg+xml")
 
 
+@app.get("/health")
+def health():
+    with lock:
+        return {"app": "party-ktv", "player_active": bool(state["player_id"]), "join_url": JOIN_URL}
+
+
 @app.get("/hls/{qid}/{name}")
 def hls_file(qid: str, name: str):
     if not re.fullmatch(r"[0-9a-f]{8}", qid) or not re.fullmatch(r"index\.m3u8|seg\d{5}\.ts", name):
@@ -714,6 +738,14 @@ async def websocket(ws: WebSocket):
 
 
 if __name__ == "__main__":
+    running = existing_instance()
+    if running:
+        print(f"\n  🎤 KTV 已经在运行：{running.get('join_url', JOIN_URL)}\n")
+        if not running.get("player_active") and not os.environ.get("KTV_NO_BROWSER"):
+            webbrowser.open(f"http://localhost:{PORT}/player")
+        shutil.rmtree(HLS_ROOT, ignore_errors=True)
+        raise SystemExit(0)
+
     print(f"\n  🎤 KTV 已启动\n  播放页（电脑）: http://localhost:{PORT}/player\n  点歌页（手机）: {JOIN_URL}\n")
     def open_player():  # 重启时旧的播放页会自动重连（并因版本变化自动刷新），有了就不再多开一个
         if not state["player_id"]:

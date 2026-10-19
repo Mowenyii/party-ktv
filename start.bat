@@ -1,7 +1,12 @@
 @echo off
 setlocal EnableExtensions
 chcp 65001 >nul
-cd /d "%~dp0"
+pushd "%~dp0" >nul 2>nul
+if errorlevel 1 (
+  echo Cannot open the KTV folder.
+  pause
+  exit /b 1
+)
 set "PYTHONUTF8=1"
 set "PIP_DISABLE_PIP_VERSION_CHECK=1"
 
@@ -53,6 +58,7 @@ if not "%KTV_EXIT_CODE%"=="0" (
   echo KTV stopped with an error.
   pause
 )
+popd
 exit /b %KTV_EXIT_CODE%
 
 :python_missing
@@ -60,16 +66,19 @@ echo Python 3.10 or newer was not found.
 echo The download page will open now. Install Python, then run start.bat again.
 start "" "https://www.python.org/downloads/windows/"
 pause
+popd
 exit /b 1
 
 :missing_files
 echo server.py or requirements.txt is missing.
 echo Extract the entire downloaded ZIP to a folder before running start.bat.
 pause
+popd
 exit /b 1
 
 :setup_error
 echo.
 echo Setup failed. Check the message above, then run start.bat again.
 pause
+popd
 exit /b 1
